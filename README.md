@@ -8,15 +8,15 @@ print("ШАГ 1: Загрузка и первичный осмотр данны�
 print("=" * 50)
 # 1. Загрузим данные
 try:
-    df = pd.read_csv('ncr_ride_bookings.csv')
-    print("Файл 'ncr_ride_bookings.csv' загружен успешно!")
+df = pd.read_csv('ncr_ride_bookings.csv')
+print("Файл 'ncr_ride_bookings.csv' загружен успешно!")
 except FileNotFoundError:
-    try:
-        df = pd.read_csv('датаcer_uber_pides_bookings.csv')
-        print("Файл 'датаcer_uber_pides_bookings.csv' загружен успешно!")
-    except FileNotFoundError:
-        print("ОШИБКА: Файл не найден!")
-        exit()
+try:
+df = pd.read_csv('датаcer_uber_pides_bookings.csv')
+print("Файл 'датаcer_uber_pides_bookings.csv' загружен успешно!")
+except FileNotFoundError:
+print("ОШИБКА: Файл не найден!")
+exit()
 # 2. Выведем первые 5 строк
 print("\n1. Первые 5 строк данных:")
 print(df.head())
@@ -36,7 +36,7 @@ print("\n" + "-"*30)
 # Покажем все столбцы для понимания структуры данных
 print("ВСЕ СТОЛБЦЫ В ДАННЫХ:")
 for i, col in enumerate(df.columns, 1):
-    print(f"{i}. {col}")
+print(f"{i}. {col}")
 print("\n" + "-"*30)
 # ШАГ 3: Выборка и фильтрация данных
 print("=" * 50)
@@ -54,7 +54,6 @@ status_cols = [col for col in all_columns if 'status' in col.lower()]
 vehicle_cols = [col for col in all_columns if 'vehicle' in col.lower() or 'auto' in col.lower()]
 payment_cols = [col for col in all_columns if 'payment' in col.lower()]
 value_cols = [col for col in all_columns if 'value' in col.lower() or 'price' in col.lower() or 'cost' in col.lower()]
-
 print(f"Возможные столбцы для Booking ID: {booking_id_cols}")
 print(f"Возможные столбцы для даты/времени: {datetime_cols}")
 print(f"Возможные столбцы для статуса: {status_cols}")
@@ -69,7 +68,6 @@ status_col = status_cols[0] if status_cols else 'Booking Status'
 vehicle_col = vehicle_cols[0] if vehicle_cols else 'Vehicle Type'
 payment_col = payment_cols[0] if payment_cols else 'Payment Method'
 value_col = value_cols[0] if value_cols else 'Booking Value'
-
 print(f"\nИспользуем столбцы:")
 print(f"Booking ID: {booking_id_col}")
 print(f"Дата/время: {datetime_col}")
@@ -82,41 +80,41 @@ print("\n" + "-"*30)
 # 1. Выберем только нужные столбцы
 print("1. Выбранные столбцы (первые 5 строк):")
 try:
-    selected_columns = df[[booking_id_col, datetime_col, status_col, vehicle_col, payment_col]]
-    print(selected_columns.head())
+selected_columns = df[[booking_id_col, datetime_col, status_col, vehicle_col, payment_col]]
+print(selected_columns.head())
 except KeyError as e:
-    print(f"Ошибка: столбец {e} не найден. Проверьте названия столбцов.")
+print(f"Ошибка: столбец {e} не найден. Проверьте названия столбцов.")
 print("\n" + "-"*30)
 # 2. Фильтрация по статусу
 print("2. Бронирования со статусом 'Cancelled by Driver':")
 try:
-    cancelled_by_driver = df[df[status_col] == 'Cancelled by Driver']
-    print(cancelled_by_driver)
-    print(f"Найдено: {len(cancelled_by_driver)} записей")
+cancelled_by_driver = df[df[status_col] == 'Cancelled by Driver']
+print(cancelled_by_driver)
+print(f"Найдено: {len(cancelled_by_driver)} записей")
 except KeyError:
-    print("Столбец статуса не найден")
+print("Столбец статуса не найден")
 print("\n" + "-"*30)
 # 3. Фильтрация по Auto и стоимости > 500
 print("3. Бронирования Auto с Booking Value > 500:")
 try:
-    auto_high_value = df[(df[vehicle_col] == 'Auto') & (df[value_col] > 500)]
-    print(auto_high_value)
-    print(f"Найдено: {len(auto_high_value)} записей")
+auto_high_value = df[(df[vehicle_col] == 'Auto') & (df[value_col] > 500)]
+print(auto_high_value)
+print(f"Найдено: {len(auto_high_value)} записей")
 except KeyError:
-    print("Не удалось выполнить фильтрацию. Проверьте названия столбцов.")
+print("Не удалось выполнить фильтрацию. Проверьте названия столбцов.")
 print("\n" + "-"*30)
 # 4. Фильтрация по датам марта 2024
 print("4. Бронирования за март 2024 года:")
 try:
-    # Преобразуем дату в правильный формат
-    df[datetime_col] = pd.to_datetime(df[datetime_col])
-    march_2024 = df[(df[datetime_col] >= '2024-03-01') & (df[datetime_col] <= '2024-03-31')]
-    print(march_2024)
-    print(f"Найдено: {len(march_2024)} записей")
+# Преобразуем дату в правильный формат
+df[datetime_col] = pd.to_datetime(df[datetime_col])
+march_2024 = df[(df[datetime_col] >= '2024-03-01') & (df[datetime_col] <= '2024-03-31')]
+print(march_2024)
+print(f"Найдено: {len(march_2024)} записей")
 except KeyError:
-    print("Столбец с датой не найден")
+print("Столбец с датой не найден")
 except Exception as e:
-    print(f"Ошибка при работе с датами: {e}")
+print(f"Ошибка при работе с датами: {e}")
 print("=" * 50)
 print("АНАЛИЗ ЗАВЕРШЕН!")
 print("=" * 50)
@@ -130,13 +128,13 @@ import pandas as pd
 <img width="639" height="239" alt="image" src="https://github.com/user-attachments/assets/a566abca-9969-497e-bc24-40af59240dbe" />
 python
 try:
-    df = pd.read_csv('ncr_ride_bookings.csv')
+df = pd.read_csv('ncr_ride_bookings.csv')
 except FileNotFoundError:
-    try:
-        df = pd.read_csv('датаcer_uber_pides_bookings.csv')
-    except FileNotFoundError:
-        print("ОШИБКА: Файл не найден!")
-        exit()
+try:
+df = pd.read_csv('датаcer_uber_pides_bookings.csv')
+except FileNotFoundError:
+print("ОШИБКА: Файл не найден!")
+exit()
 Как работает: Пытается загрузить файл. Если первого файла нет - пробует второй. Если оба не найдены - останавливает программу.
 # 3. Первичный анализ данных
 python
