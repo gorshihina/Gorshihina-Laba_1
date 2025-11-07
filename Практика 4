@@ -1,0 +1,829 @@
+Практика 4. МАШИННОЕ ОБУЧЕНИЕ
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
+import warnings
+from scipy import stats
+from sklearn.cluster import KMeans
+
+# Настройки для корректного отображения
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 1000)
+pd.set_option('display.max_rows', 50)
+warnings.filterwarnings('ignore')
+
+print("=" * 100)
+print("ПОЛНАЯ МОДЕЛЬ ПРЕДСКАЗАНИЯ СТОИМОСТИ ПОЕЗДОК")
+print("=" * 100)
+
+# Загрузка данных
+try:
+    df = pd.read_csv('ncr_ride_bookings.csv')
+    print("✅ Файл 'ncr_ride_bookings.csv' загружен успешно!")
+    print(f"📊 Размер данных: {df.shape}")
+except FileNotFoundError:
+    print("❌ ОШИБКА: Файл не найден!")
+    exit()
+
+print("\n" + "=" * 100)
+print("ШАГ 1: ПЕРВИЧНЫЙ АНАЛИЗ ДАННЫХ")
+print("=" * 100)
+
+# Показать первые строки
+print("📋 ПЕРВЫЕ 5 СТРОК ДАННЫХ:")
+print(df.head())
+print("\n" + "-" * 50)
+
+# Общая информация
+print("📊 ОБЩАЯ ИНФОРМАЦИЯ О ДАННЫХ:")
+df.info()
+print("\n" + "-" * 50)
+
+# Статистика по числовым столбцам
+print("📈 СТАТИСТИКА ЧИСЛОВЫХ СТОЛБЦОВ:")
+print(df.describe())
+print("\n" + "-" * 50)
+
+# Автоматическое определение столбца со стоимостью
+value_columns = [col for col in df.columns if any(x in col.lower() for x in
+                                                  ['value', 'price', 'cost', 'amount', 'fare', 'charge'])]
+value_col = value_columns[0] if value_columns else None
+
+if value_col is None:
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_cols) > 0:
+        value_col = numeric_cols[0]
+        print(f"🎯 Используем числовой столбец как целевую переменную: '{value_col}'")
+    else:
+        print("❌ Числовые столбцы не найдены!")
+        exit()
+
+print(f"\n🎯 ЦЕЛЕВАЯ ПЕРЕМЕННАЯ: '{value_col}'")
+
+# Детальный анализ целевой переменной
+print(f"\n📊 ДЕТАЛЬНЫЙ АНАЛИЗ '{value_col}':")
+target_stats = {
+    'Минимальное значение': df[value_col].min(),
+    'Максимальное значение': df[value_col].max(),
+    'Среднее значение': df[value_col].mean(),
+    'Медианное значение': df[value_col].median(),
+    'Стандартное отклонение': df[value_col].std(),
+    'Количество нулевых значений': (df[value_col] == 0).sum(),
+    'Количество отрицательных значений': (df[value_col] < 0).sum(),
+    'Количество пропущенных значений': df[value_col].isnull().sum()
+}
+
+for stat, value in target_stats.items():
+    print(f"   • {stat}: {value:.2f}" if isinstance(value, (int, float)) else f"   • {stat}: {value}")
+
+# Визуализация распределения
+print("\n📈 ВИЗУАЛИЗАЦИЯ РАСПРЕДЕЛЕНИЯ СТОИМОСТИ...")
+plt.figure(figsize=(15, 10))
+
+# 1. Оригинальное распределение
+plt.subplot(2, 3, 1)
+plt.hist(df[value_col].dropna(), bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+plt.title('Оригинальное распределение стоимости', fontsize=12, fontweight='bold')
+plt.xlabel('Стоимость поездки')
+plt.ylabel('Количество поездок')
+plt.grid(True, alpha=0.3)
+
+# 2. Распределение без крайних выбросов
+plt.subplot(2, 3, 2)
+upper_99 = df[value_col].quantile(0.99)
+filtered_data = df[value_col][df[value_col] <= upper_99]
+plt.hist(filtered_data, bins=50, alpha=0.7, color='lightcoral', edgecolor='black')
+plt.title(f'Распределение (до 99% перцентиля: {upper_99:.0f})', fontsize=12, fontweight='bold')
+plt.xlabel('Стоимость поездки')
+plt.ylabel('Количество поездок')
+plt.grid(True, alpha=0.3)
+
+# 3. Boxplot
+plt.subplot(2, 3, 3)
+plt.boxplot(df[value_col].dropna())
+plt.title('Boxplot стоимости', fontsize=12, fontweight='bold')
+plt.ylabel('Стоимость')
+
+# 4. Анализ выбросов
+plt.subplot(2, 3, 4)
+Q1 = df[value_col].quantile(0.25)
+Q3 = df[value_col].quantile(0.75)
+IQR = Q3 - Q1
+lower_bound = Q1 - 1.5 * IQR
+upper_bound = Q3 + 1.5 * IQR
+
+outliers = df[(df[value_col] < lower_bound) | (df[value_col] > upper_bound)]
+non_outliers = df[(df[value_col] >= lower_bound) & (df[value_col] <= upper_bound)]
+
+categories = ['Не выбросы', 'Выбросы']
+counts = [len(non_outliers), len(outliers)]
+colors = ['lightblue', 'red']
+
+bars = plt.bar(categories, counts, color=colors, alpha=0.7, edgecolor='black')
+plt.title('Распределение выбросов', fontsize=12, fontweight='bold')
+plt.ylabel('Количество записей')
+
+# Добавляем значения на столбцы
+for bar, count in zip(bars, counts):
+    plt.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(counts) * 0.01,
+             f'{count}', ha='center', va='bottom', fontweight='bold')
+
+# 5. QQ-plot
+plt.subplot(2, 3, 5)
+if len(df[value_col].dropna()) > 0:
+    stats.probplot(df[value_col].dropna(), dist="norm", plot=plt)
+    plt.title('Q-Q plot (проверка нормальности)', fontsize=12, fontweight='bold')
+
+# 6. Кумулятивное распределение
+plt.subplot(2, 3, 6)
+sorted_data = np.sort(df[value_col].dropna())
+y_vals = np.arange(len(sorted_data)) / float(len(sorted_data))
+plt.plot(sorted_data, y_vals, linewidth=2)
+plt.title('Кумулятивное распределение', fontsize=12, fontweight='bold')
+plt.xlabel('Стоимость')
+plt.ylabel('Вероятность')
+plt.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+
+# Статистика по выбросам
+print(f"\n📊 СТАТИСТИКА ВЫБРОСОВ:")
+print(f"   • Нижняя граница выбросов: {lower_bound:.2f}")
+print(f"   • Верхняя граница выбросов: {upper_bound:.2f}")
+print(f"   • Количество выбросов: {len(outliers)} ({len(outliers) / len(df) * 100:.2f}%)")
+
+if len(outliers) > 0:
+    print(f"   • Минимальный выброс: {outliers[value_col].min():.2f}")
+    print(f"   • Максимальный выброс: {outliers[value_col].max():.2f}")
+
+# Обработка выбросов
+print(f"\n🎯 ОБРАБОТКА ВЫБРОСОВ...")
+upper_95 = df[value_col].quantile(0.95)
+initial_outliers = len(df[df[value_col] > upper_95])
+df_processed = df.copy()
+df_processed[value_col] = np.where(df_processed[value_col] > upper_95, upper_95, df_processed[value_col])
+
+print(f"   • Применено Winsorization на 95% перцентиле: {upper_95:.2f}")
+print(f"   • Обработано записей: {initial_outliers}")
+
+# Визуализация после обработки
+print("\n📈 СРАВНЕНИЕ ДО И ПОСЛЕ ОБРАБОТКИ...")
+plt.figure(figsize=(15, 5))
+
+plt.subplot(1, 3, 1)
+plt.hist(df_processed[value_col], bins=50, alpha=0.7, color='orange', edgecolor='black')
+plt.title('После обработки выбросов', fontsize=12, fontweight='bold')
+plt.xlabel('Стоимость поездки')
+plt.ylabel('Количество поездок')
+plt.grid(True, alpha=0.3)
+
+plt.subplot(1, 3, 2)
+plt.boxplot(df_processed[value_col].dropna())
+plt.title('Boxplot после обработки', fontsize=12, fontweight='bold')
+plt.ylabel('Стоимость')
+
+plt.subplot(1, 3, 3)
+# Сравнение до и после
+categories = ['До обработки', 'После обработки']
+means = [df[value_col].mean(), df_processed[value_col].mean()]
+stds = [df[value_col].std(), df_processed[value_col].std()]
+
+x_pos = np.arange(len(categories))
+bars = plt.bar(x_pos, means, yerr=stds, capsize=10, alpha=0.7,
+               color=['skyblue', 'lightcoral'], edgecolor='black')
+plt.xticks(x_pos, categories)
+plt.title('Сравнение среднего и стандартного отклонения', fontsize=12, fontweight='bold')
+plt.ylabel('Стоимость')
+
+# Добавляем значения на столбцы
+for i, (mean, std) in enumerate(zip(means, stds)):
+    plt.text(i, mean + std + max(means) * 0.05, f'{mean:.1f}±{std:.1f}',
+             ha='center', va='bottom', fontweight='bold', fontsize=10)
+
+plt.tight_layout()
+plt.show()
+
+print(f"\n📊 СРАВНЕНИЕ ДО И ПОСЛЕ ОБРАБОТКИ:")
+print(f"   • Среднее значение: {df[value_col].mean():.2f} → {df_processed[value_col].mean():.2f}")
+print(f"   • Стандартное отклонение: {df[value_col].std():.2f} → {df_processed[value_col].std():.2f}")
+print(f"   • Максимальное значение: {df[value_col].max():.2f} → {df_processed[value_col].max():.2f}")
+
+# Используем обработанные данные
+df = df_processed
+
+print("\n" + "=" * 100)
+print("ШАГ 2: АНАЛИЗ СТРУКТУРЫ ДАННЫХ И СОЗДАНИЕ ПРИЗНАКОВ")
+print("=" * 100)
+
+# Анализ структуры данных
+print("📋 СТРУКТУРА ДАННЫХ:")
+print(f"   • Всего столбцов: {len(df.columns)}")
+print(f"   • Всего строк: {len(df)}")
+
+print("\n📊 ТИПЫ ДАННЫХ:")
+print(df.dtypes.value_counts())
+
+print("\n🔍 ПРОПУЩЕННЫЕ ЗНАЧЕНИЯ:")
+missing_data = df.isnull().sum()
+missing_percent = (df.isnull().sum() / len(df)) * 100
+missing_info = pd.DataFrame({
+    'Пропущено': missing_data,
+    'Процент': missing_percent.round(2)
+})
+missing_info = missing_info[missing_info['Пропущено'] > 0]
+if len(missing_info) > 0:
+    print(missing_info)
+else:
+    print("   • Пропущенных значений нет")
+
+# Словарь для автоматического определения столбцов
+column_categories = {
+    'vehicle_col': ['vehicle', 'auto', 'car', 'cab'],
+    'datetime_col': ['date', 'time', 'datetime', 'timestamp'],
+    'payment_col': ['payment', 'method'],
+    'distance_col': ['distance', 'km', 'mile', 'length'],
+    'duration_col': ['duration', 'time', 'minute', 'hour', 'travel_time'],
+    'pickup_col': ['pickup', 'from', 'origin', 'start'],
+    'dropoff_col': ['dropoff', 'to', 'destination', 'end'],
+    'user_col': ['user', 'customer', 'rider', 'client'],
+    'driver_col': ['driver', 'partner']
+}
+
+# Автоматическое определение столбцов
+print("\n🎯 АВТОМАТИЧЕСКОЕ ОПРЕДЕЛЕНИЕ СТОЛБЦОВ:")
+detected_columns = {}
+for category, keywords in column_categories.items():
+    for col in df.columns:
+        if any(keyword in col.lower() for keyword in keywords):
+            detected_columns[category] = col
+            print(f"   • {category}: '{col}'")
+            break
+
+# Классификация признаков
+categorical_features = []
+numeric_features = []
+
+for category, col in detected_columns.items():
+    if col in df.columns:
+        if df[col].dtype == 'object':
+            categorical_features.append(col)
+        else:
+            numeric_features.append(col)
+
+print(f"\n📋 КЛАССИФИКАЦИЯ ПРИЗНАКОВ:")
+print(f"   • Категориальные признаки ({len(categorical_features)}): {categorical_features}")
+print(f"   • Числовые признаки ({len(numeric_features)}): {numeric_features}")
+
+# Анализ категориальных признаков
+if categorical_features:
+    print(f"\n📊 АНАЛИЗ КАТЕГОРИАЛЬНЫХ ПРИЗНАКОВ:")
+    for cat_col in categorical_features:
+        unique_count = df[cat_col].nunique()
+        print(f"   • '{cat_col}': {unique_count} уникальных значений")
+
+        if unique_count <= 20:  # Показываем только если не слишком много значений
+            value_counts = df[cat_col].value_counts().head(10)
+            print(f"     Топ-10 значений:")
+            for value, count in value_counts.items():
+                print(f"       - {value}: {count} ({count / len(df) * 100:.1f}%)")
+
+# Визуализация категориальных признаков
+if categorical_features:
+    print("\n📈 ВИЗУАЛИЗАЦИЯ КАТЕГОРИАЛЬНЫХ ПРИЗНАКОВ...")
+    n_cats = min(3, len(categorical_features))
+    fig, axes = plt.subplots(1, n_cats, figsize=(15, 5))
+    if n_cats == 1:
+        axes = [axes]
+
+    for i, cat_col in enumerate(categorical_features[:n_cats]):
+        top_categories = df[cat_col].value_counts().head(8)
+        axes[i].bar(top_categories.index.astype(str), top_categories.values,
+                    color='lightseagreen', alpha=0.7, edgecolor='black')
+        axes[i].set_title(f'{cat_col}', fontsize=12, fontweight='bold')
+        axes[i].tick_params(axis='x', rotation=45)
+        axes[i].grid(True, alpha=0.3)
+
+        # Добавляем значения на столбцы
+        for j, value in enumerate(top_categories.values):
+            axes[i].text(j, value + max(top_categories.values) * 0.01, f'{value}',
+                         ha='center', va='bottom', fontweight='bold')
+
+    plt.tight_layout()
+    plt.show()
+
+print("\n" + "=" * 100)
+print("ШАГ 3: СОЗДАНИЕ РАСШИРЕННЫХ ПРИЗНАКОВ")
+print("=" * 100)
+
+all_features = []
+time_features = []
+statistical_features = []
+interaction_features = []
+geographic_features = []
+behavioral_features = []
+
+print("🔄 СОЗДАНИЕ ПРИЗНАКОВ...")
+
+# 1. ВРЕМЕННЫЕ ПРИЗНАКИ
+print("\n⏰ ВРЕМЕННЫЕ ПРИЗНАКИ:")
+datetime_col = detected_columns.get('datetime_col')
+if datetime_col and datetime_col in df.columns:
+    try:
+        df[datetime_col] = pd.to_datetime(df[datetime_col])
+
+        # Базовые временные признаки
+        df['hour'] = df[datetime_col].dt.hour
+        df['day_of_week'] = df[datetime_col].dt.dayofweek
+        df['month'] = df[datetime_col].dt.month
+        df['day_of_month'] = df[datetime_col].dt.day
+        df['week_of_year'] = df[datetime_col].dt.isocalendar().week
+        df['is_weekend'] = (df[datetime_col].dt.dayofweek >= 5).astype(int)
+
+        # Расширенные временные признаки
+        df['is_rush_hour'] = (((df['hour'] >= 7) & (df['hour'] <= 10)) |
+                              ((df['hour'] >= 16) & (df['hour'] <= 19))).astype(int)
+        df['is_night'] = ((df['hour'] >= 23) | (df['hour'] <= 5)).astype(int)
+
+        # Циклические признаки
+        df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
+        df['hour_cos'] = np.cos(2 * np.pi * df['hour'] / 24)
+        df['day_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+        df['day_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+
+        time_features = ['hour', 'day_of_week', 'month', 'day_of_month', 'week_of_year',
+                         'is_weekend', 'is_rush_hour', 'is_night',
+                         'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
+
+        print(f"   ✅ Создано {len(time_features)} временных признаков")
+
+    except Exception as e:
+        print(f"   ❌ Ошибка создания временных признаков: {e}")
+        time_features = []
+else:
+    print("   ⚠️ Столбец времени не найден")
+
+# 2. СТАТИСТИЧЕСКИЕ ПРИЗНАКИ
+print("\n📊 СТАТИСТИЧЕСКИЕ ПРИЗНАКИ:")
+
+# Признаки спроса
+if 'hour' in df.columns:
+    df['hourly_demand'] = df.groupby('hour')['hour'].transform('count')
+    statistical_features.append('hourly_demand')
+    print(f"   • hourly_demand - спрос по часам")
+
+if 'day_of_week' in df.columns:
+    df['daily_demand'] = df.groupby('day_of_week')['day_of_week'].transform('count')
+    statistical_features.append('daily_demand')
+    print(f"   • daily_demand - спрос по дням недели")
+
+# Статистики по часам
+if 'hour' in df.columns:
+    hourly_stats = df.groupby('hour')[value_col].agg(['mean', 'std', 'median']).reset_index()
+    hourly_stats.columns = ['hour', 'hourly_mean_price', 'hourly_std_price', 'hourly_median_price']
+    df = df.merge(hourly_stats, on='hour', how='left')
+
+    statistical_features.extend(['hourly_mean_price', 'hourly_std_price', 'hourly_median_price'])
+    print(f"   • hourly_mean_price - средняя стоимость по часам")
+    print(f"   • hourly_std_price - стандартное отклонение по часам")
+    print(f"   • hourly_median_price - медианная стоимость по часам")
+
+# 3. ЧАСТОТНОЕ КОДИРОВАНИЕ КАТЕГОРИАЛЬНЫХ ПЕРЕМЕННЫХ
+print("\n🎯 ЧАСТОТНОЕ КОДИРОВАНИЕ КАТЕГОРИАЛЬНЫХ ПЕРЕМЕННЫХ:")
+for cat_col in categorical_features:
+    if cat_col in df.columns:
+        freq_encoding = df[cat_col].value_counts().to_dict()
+        df[f'{cat_col}_freq'] = df[cat_col].map(freq_encoding)
+        statistical_features.append(f'{cat_col}_freq')
+        print(f"   • {cat_col}_freq - частотное кодирование")
+
+print(f"   ✅ Добавлено {len(categorical_features)} частотных признаков")
+
+# 4. ПРИЗНАКИ ВЗАИМОДЕЙСТВИЯ
+print("\n🔗 ПРИЗНАКИ ВЗАИМОДЕЙСТВИЯ:")
+if 'hour' in df.columns and 'hourly_demand' in df.columns:
+    df['hour_demand_interaction'] = df['hour'] * df['hourly_demand']
+    interaction_features.append('hour_demand_interaction')
+    print(f"   • hour_demand_interaction - взаимодействие часа и спроса")
+
+if 'is_weekend' in df.columns and 'is_rush_hour' in df.columns:
+    df['weekend_rush_interaction'] = df['is_weekend'] * df['is_rush_hour']
+    interaction_features.append('weekend_rush_interaction')
+    print(f"   • weekend_rush_interaction - взаимодействие выходных и часа пик")
+
+print(f"   ✅ Создано {len(interaction_features)} признаков взаимодействия")
+
+# 5. ПОВЕДЕНЧЕСКИЕ ПРИЗНАКИ
+print("\n👤 ПОВЕДЕНЧЕСКИЕ ПРИЗНАКИ:")
+user_col = detected_columns.get('user_col')
+if user_col and user_col in df.columns:
+    try:
+        user_stats = df.groupby(user_col).agg({
+            value_col: ['mean', 'count', 'std']
+        }).reset_index()
+
+        user_stats.columns = [user_col, 'user_mean_spend', 'user_ride_count', 'user_std_spend']
+        df = df.merge(user_stats, on=user_col, how='left')
+
+        df['user_spend_variability'] = df['user_std_spend'] / (df['user_mean_spend'] + 1e-6)
+
+        behavioral_features = ['user_mean_spend', 'user_ride_count', 'user_std_spend', 'user_spend_variability']
+        print(f"   • user_mean_spend - средние траты пользователя")
+        print(f"   • user_ride_count - количество поездок пользователя")
+        print(f"   • user_std_spend - стандартное отклонение трат")
+        print(f"   • user_spend_variability - изменчивость трат")
+
+        print(f"   ✅ Создано {len(behavioral_features)} поведенческих признаков")
+    except Exception as e:
+        print(f"   ❌ Ошибка создания поведенческих признаков: {e}")
+        behavioral_features = []
+else:
+    print("   ⚠️ ID пользователя не найден")
+
+# 6. ГЕОГРАФИЧЕСКИЕ ПРИЗНАКИ
+print("\n📍 ГЕОГРАФИЧЕСКИЕ ПРИЗНАКИ:")
+coord_cols = [col for col in df.columns if any(x in col.lower() for x in ['lat', 'lon', 'latitude', 'longitude'])]
+if len(coord_cols) >= 2:
+    lat_col, lon_col = coord_cols[:2]
+
+    valid_coords = df[[lat_col, lon_col]].notna().all(axis=1)
+    print(f"   • Валидные координаты: {valid_coords.sum()} из {len(df)}")
+
+    if valid_coords.sum() > 100:
+        df['pickup_lat_rounded'] = df[lat_col].round(3)
+        df['pickup_lon_rounded'] = df[lon_col].round(3)
+
+        coords = df.loc[valid_coords, [lat_col, lon_col]]
+        kmeans = KMeans(n_clusters=min(15, len(coords) // 100), random_state=42)
+        df['location_cluster'] = -1
+        df.loc[valid_coords, 'location_cluster'] = kmeans.fit_predict(coords)
+
+        geographic_features = ['pickup_lat_rounded', 'pickup_lon_rounded', 'location_cluster']
+        print(f"   • pickup_lat_rounded - округленная широта")
+        print(f"   • pickup_lon_rounded - округленная долгота")
+        print(f"   • location_cluster - кластер местоположения")
+
+        print(f"   ✅ Создано {len(geographic_features)} географических признаков")
+    else:
+        print("   ⚠️ Недостаточно валидных координат для кластеризации")
+else:
+    print("   ⚠️ Координаты не найдены")
+
+# СБОР ВСЕХ ПРИЗНАКОВ
+all_features = (numeric_features + time_features + statistical_features +
+                interaction_features + geographic_features + behavioral_features)
+
+# Удаляем дубликаты и проверяем наличие в данных
+all_features = list(set([f for f in all_features if f in df.columns]))
+
+print(f"\n📋 ИТОГО СОЗДАНО ПРИЗНАКОВ: {len(all_features)}")
+print(f"   • Числовые: {len(numeric_features)}")
+print(f"   • Временные: {len(time_features)}")
+print(f"   • Статистические: {len([f for f in statistical_features if f in df.columns])}")
+print(f"   • Взаимодействия: {len(interaction_features)}")
+print(f"   • Географические: {len(geographic_features)}")
+print(f"   • Поведенческие: {len(behavioral_features)}")
+
+print("\n" + "=" * 100)
+print("ШАГ 4: ПОДГОТОВКА ДАННЫХ ДЛЯ МОДЕЛИ")
+print("=" * 100)
+
+print("🧹 ПОДГОТОВКА ДАННЫХ...")
+
+# Создаем финальный датафрейм
+final_data = df[all_features + [value_col]].copy()
+print(f"   • Исходный размер данных: {final_data.shape}")
+
+# Заполнение пропусков
+print("\n🔧 ЗАПОЛНЕНИЕ ПРОПУЩЕННЫХ ЗНАЧЕНИЙ...")
+for col in final_data.columns:
+    if final_data[col].isnull().sum() > 0:
+        if final_data[col].dtype in ['float64', 'int64']:
+            fill_value = final_data[col].median() if final_data[col].notna().sum() > 0 else 0
+            final_data[col] = final_data[col].fillna(fill_value)
+            print(f"   • {col}: заполнено медианой ({fill_value:.2f})")
+        else:
+            fill_value = final_data[col].mode()[0] if not final_data[col].mode().empty else 'Unknown'
+            final_data[col] = final_data[col].fillna(fill_value)
+            print(f"   • {col}: заполнено модой ('{fill_value}')")
+
+# Кодируем категориальные переменные
+print("\n🔤 КОДИРОВАНИЕ КАТЕГОРИАЛЬНЫХ ПЕРЕМЕННЫХ...")
+label_encoders = {}
+for col in categorical_features:
+    if col in final_data.columns:
+        try:
+            le = LabelEncoder()
+            final_data[col] = le.fit_transform(final_data[col].astype(str))
+            label_encoders[col] = le
+            print(f"   • {col}: успешно закодирован ({len(le.classes_)} классов)")
+        except Exception as e:
+            print(f"   • {col}: ошибка кодирования - {e}")
+
+print(f"\n✅ ДАННЫЕ ПОДГОТОВЛЕНЫ")
+print(f"   • Финальный размер: {final_data.shape}")
+print(f"   • Целевая переменная: '{value_col}'")
+print(f"   • Признаков: {len(all_features)}")
+
+print("\n" + "=" * 100)
+print("ШАГ 5: ОБУЧЕНИЕ МОДЕЛЕЙ МАШИННОГО ОБУЧЕНИЯ")
+print("=" * 100)
+
+# Разделение на признаки и целевую переменную
+X = final_data.drop(columns=[value_col])
+y = final_data[value_col]
+
+# Удаляем возможные NaN после преобразований
+mask = ~(X.isnull().any(axis=1) | y.isnull())
+X = X[mask]
+y = y[mask]
+
+print(f"🎯 РАЗМЕРНОСТЬ ДЛЯ ОБУЧЕНИЯ:")
+print(f"   • Признаки (X): {X.shape}")
+print(f"   • Целевая переменная (y): {y.shape}")
+
+# Стратификация по квантилям стоимости
+try:
+    y_bins = pd.qcut(y, q=5, duplicates='drop')
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y_bins
+    )
+    print("✅ Стратифицированное разделение выполнено")
+except Exception as e:
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    print("⚠️ Обычное разделение (стратификация не удалась)")
+
+print(f"\n📚 РАЗМЕРЫ ВЫБОРОК:")
+print(f"   • Обучающая выборка: {X_train.shape[0]} записей")
+print(f"   • Тестовая выборка: {X_test.shape[0]} записей")
+print(f"   • Количество признаков: {X_train.shape[1]}")
+
+# Масштабирование признаков
+print("\n⚖️ МАСШТАБИРОВАНИЕ ПРИЗНАКОВ...")
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+print("✅ Масштабирование завершено")
+
+# Обучение нескольких моделей
+print("\n🤖 ОБУЧЕНИЕ МОДЕЛЕЙ...")
+
+models = {
+    'Random Forest': RandomForestRegressor(
+        n_estimators=100,
+        max_depth=20,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1
+    ),
+    'Gradient Boosting': GradientBoostingRegressor(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        random_state=42
+    )
+}
+
+results = {}
+
+for name, model in models.items():
+    print(f"   🚀 Обучение {name}...")
+    model.fit(X_train_scaled, y_train)
+    y_pred = model.predict(X_test_scaled)
+
+    # Метрики качества
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_test, y_pred)
+    mape = np.mean(np.abs((y_test - y_pred) / np.where(y_test == 0, 1, y_test))) * 100
+
+    results[name] = {
+        'model': model,
+        'mae': mae,
+        'rmse': rmse,
+        'r2': r2,
+        'mape': mape,
+        'predictions': y_pred
+    }
+
+    print(f"   ✅ {name}:")
+    print(f"      R² = {r2:.4f}")
+    print(f"      MAE = {mae:.2f}")
+    print(f"      RMSE = {rmse:.2f}")
+    print(f"      MAPE = {mape:.2f}%")
+
+# Выбор лучшей модели
+best_model_name = max(results.keys(), key=lambda x: results[x]['r2'])
+best_model = results[best_model_name]
+print(f"\n🏆 ЛУЧШАЯ МОДЕЛЬ: {best_model_name}")
+
+print("\n" + "=" * 100)
+print("ШАГ 6: ОЦЕНКА КАЧЕСТВА МОДЕЛИ")
+print("=" * 100)
+
+y_pred = best_model['predictions']
+
+print("📊 МЕТРИКИ КАЧЕСТВА ЛУЧШЕЙ МОДЕЛИ:")
+print(f"• MAE (Средняя абсолютная ошибка): {best_model['mae']:.2f}")
+print(f"• RMSE (Среднеквадратичная ошибка): {best_model['rmse']:.2f}")
+print(f"• R² (Коэффициент детерминации): {best_model['r2']:.4f}")
+print(f"• MAPE (Средняя абсолютная процентная ошибка): {best_model['mape']:.2f}%")
+
+# Детальный анализ ошибок
+print(f"\n📈 ДЕТАЛЬНЫЙ АНАЛИЗ ОШИБОК:")
+error_stats = pd.DataFrame({
+    'Факт': y_test,
+    'Прогноз': y_pred,
+    'Ошибка': y_test - y_pred,
+    'Абсолютная_ошибка': np.abs(y_test - y_pred),
+    'Процентная_ошибка': np.abs(y_test - y_pred) / np.where(y_test == 0, 1, y_test) * 100
+})
+
+print("Статистика ошибок:")
+print(f"• Медианная абсолютная ошибка: {error_stats['Абсолютная_ошибка'].median():.2f}")
+print(f"• 75-й процентиль ошибки: {error_stats['Абсолютная_ошибка'].quantile(0.75):.2f}")
+print(f"• 90-й процентиль ошибки: {error_stats['Абсолютная_ошибка'].quantile(0.9):.2f}")
+print(f"• Максимальная ошибка: {error_stats['Абсолютная_ошибка'].max():.2f}")
+
+# Визуализация результатов
+print("\n📈 ВИЗУАЛИЗАЦИЯ РЕЗУЛЬТАТОВ...")
+plt.figure(figsize=(18, 6))
+
+# 1. Предсказания vs Факт
+plt.subplot(1, 3, 1)
+plt.scatter(y_test, y_pred, alpha=0.6, s=20, color='blue')
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2, label='Идеальная линия')
+plt.xlabel('Фактическая стоимость')
+plt.ylabel('Предсказанная стоимость')
+plt.title('Предсказания vs Факт', fontsize=12, fontweight='bold')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
+# Добавляем линию тренда
+z = np.polyfit(y_test, y_pred, 1)
+p = np.poly1d(z)
+plt.plot(y_test, p(y_test), "g--", alpha=0.8, label=f'Тренд: y={z[0]:.2f}x+{z[1]:.2f}')
+plt.legend()
+
+# 2. Распределение ошибок
+plt.subplot(1, 3, 2)
+errors = y_test - y_pred
+plt.hist(errors, bins=50, alpha=0.7, color='orange', edgecolor='black')
+plt.axvline(x=0, color='red', linestyle='--', linewidth=2, label='Нулевая ошибка')
+plt.xlabel('Ошибка предсказания')
+plt.ylabel('Частота')
+plt.title('Распределение ошибок', fontsize=12, fontweight='bold')
+plt.grid(True, alpha=0.3)
+plt.legend()
+
+# 3. Важность признаков
+plt.subplot(1, 3, 3)
+model_for_importance = best_model['model']
+if hasattr(model_for_importance, 'feature_importances_'):
+    feature_importance = pd.DataFrame({
+        'feature': X.columns,
+        'importance': model_for_importance.feature_importances_
+    }).sort_values('importance', ascending=False).head(15)
+
+    bars = plt.barh(feature_importance['feature'], feature_importance['importance'],
+                    color='green', alpha=0.7, edgecolor='black')
+    plt.xlabel('Важность признака')
+    plt.title('Топ-15 важных признаков', fontsize=12, fontweight='bold')
+    plt.gca().invert_yaxis()
+
+    # Добавляем значения на столбцы
+    for bar in bars:
+        width = bar.get_width()
+        plt.text(width + max(feature_importance['importance']) * 0.01, bar.get_y() + bar.get_height() / 2,
+                 f'{width:.3f}', ha='left', va='center', fontweight='bold')
+else:
+    plt.text(0.5, 0.5, 'Важность признаков\nне доступна',
+             ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
+
+plt.tight_layout()
+plt.show()
+
+print("\n" + "=" * 100)
+print("ШАГ 7: БИЗНЕС-АНАЛИЗ И РЕКОМЕНДАЦИИ")
+print("=" * 100)
+
+print("💰 КЛЮЧЕВЫЕ ИНСАЙТЫ:")
+
+# Анализ влияния времени на стоимость
+if 'hour' in df.columns:
+    hourly_analysis = df.groupby('hour').agg({
+        value_col: ['mean', 'count']
+    }).round(2)
+    hourly_analysis.columns = ['avg_price', 'ride_count']
+    hourly_analysis = hourly_analysis.sort_values('avg_price', ascending=False)
+
+    print(f"\n⏰ ТОП-5 САМЫХ ДОРОГИХ ЧАСОВ:")
+    for hour, row in hourly_analysis.head().iterrows():
+        print(f"   • {hour:02d}:00 - {row['avg_price']:.2f} (поездок: {row['ride_count']})")
+
+# Анализ по дням недели
+if 'day_of_week' in df.columns:
+    weekday_analysis = df.groupby('day_of_week').agg({
+        value_col: ['mean', 'count']
+    }).round(2)
+    weekday_analysis.columns = ['avg_price', 'ride_count']
+    days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+    weekday_analysis.index = [days[i] for i in weekday_analysis.index]
+
+    print(f"\n📅 СТОИМОСТЬ ПО ДНЯМ НЕДЕЛИ:")
+    for day, row in weekday_analysis.iterrows():
+        print(f"   • {day} - {row['avg_price']:.2f} (поездок: {row['ride_count']})")
+
+# Анализ по типу транспорта
+vehicle_col = detected_columns.get('vehicle_col')
+if vehicle_col and vehicle_col in df.columns:
+    vehicle_analysis = df.groupby(vehicle_col).agg({
+        value_col: ['mean', 'count']
+    }).round(2)
+    vehicle_analysis.columns = ['avg_price', 'ride_count']
+    vehicle_analysis = vehicle_analysis.sort_values('avg_price', ascending=False)
+
+    print(f"\n🚗 СТОИМОСТЬ ПО ТИПАМ ТРАНСПОРТА:")
+    for vehicle, row in vehicle_analysis.iterrows():
+        print(f"   • {vehicle} - {row['avg_price']:.2f} (поездок: {row['ride_count']})")
+
+print("\n🎯 РЕКОМЕНДАЦИИ ДЛЯ БИЗНЕСА:")
+
+print("\n1. 🚀 ОПЕРАЦИОННЫЕ УЛУЧШЕНИЯ:")
+print("   • Внедрите динамическое ценообразование на основе временных паттернов")
+print("   • Оптимизируйте распределение транспорта в часы пик")
+print("   • Разработайте специальные тарифы для разных временных окон")
+
+print("\n2. 📈 УПРАВЛЕНИЕ ДОХОДАМИ:")
+print("   • Сфокусируйтесь на продвижении премиальных услуг в дорогие часы")
+print("   • Разработайте программы лояльности для постоянных клиентов")
+print("   • Оптимизируйте ценообразование на основе спроса")
+
+print("\n3. 🔧 ТЕХНИЧЕСКИЕ УЛУЧШЕНИЯ:")
+print("   • Используйте модель для прогнозирования спроса")
+print("   • Внедрите систему рекомендаций для пользователей")
+print("   • Создайте дашборды для мониторинга ключевых метрик")
+
+print("\n" + "=" * 100)
+print("ИТОГИ МОДЕЛИРОВАНИЯ")
+print("=" * 100)
+
+print("✅ ОСНОВНЫЕ ДОСТИЖЕНИЯ:")
+print(f"• Обработано записей: {len(df)}")
+print(f"• Создано признаков: {len(all_features)}")
+print(f"• Лучшая модель: {best_model_name}")
+print(f"• Качество модели (R²): {best_model['r2']:.4f}")
+print(f"• Средняя ошибка прогноза: {best_model['mape']:.2f}%")
+print(f"• Точность прогноза: {100 - best_model['mape']:.1f}%")
+
+# Анализ важности признаков
+if hasattr(model_for_importance, 'feature_importances_'):
+    feature_importance = pd.DataFrame({
+        'feature': X.columns,
+        'importance': model_for_importance.feature_importances_
+    }).sort_values('importance', ascending=False)
+
+    print(f"\n🎯 ТОП-10 ВАЖНЕЙШИХ ФАКТОРОВ СТОИМОСТИ:")
+    top_factors = feature_importance.head(10)
+    for i, (_, row) in enumerate(top_factors.iterrows(), 1):
+        print(f"{i:2d}. {row['feature']}: {row['importance']:.4f}")
+
+print("\n🚀 ДАЛЬНЕЙШИЕ ШАГИ:")
+print("1. Внедрить модель в production-систему")
+print("2. Настроить мониторинг качества предсказаний")
+print("3. Регулярно переобучать модель на новых данных")
+print("4. Добавить внешние данные (погода, пробки, события)")
+print("5. Расширить функционал предиктивной аналитики")
+
+print("\n" + "=" * 100)
+print("МОДЕЛЬ ПРЕДСКАЗАНИЯ СТОИМОСТИ УСПЕШНО СОЗДАНА И ПРОТЕСТИРОВАНА!")
+print("=" * 100)
+
+# Пример прогноза для новых данных
+print(f"\n🔮 ПРИМЕР ПРОГНОЗА ДЛЯ НОВЫХ ДАННЫХ:")
+sample_indices = X_test.sample(min(3, len(X_test)), random_state=42).index
+print("\nПримеры прогнозов:")
+print("-" * 80)
+print(f"{'№':<3} {'Факт':<10} {'Прогноз':<10} {'Ошибка':<10} {'Точность':<10}")
+print("-" * 80)
+
+for i, idx in enumerate(sample_indices, 1):
+    actual = y_test.loc[idx]
+    predicted = y_pred[X_test.index.get_loc(idx)]
+    error = abs(actual - predicted)
+    accuracy = (1 - error / actual) * 100 if actual != 0 else 100
+
+    print(f"{i:<3} {actual:<10.2f} {predicted:<10.2f} {error:<10.2f} {accuracy:<10.1f}%")
+
+print("-" * 80)
